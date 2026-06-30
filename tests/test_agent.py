@@ -67,3 +67,44 @@ def test_llm_down_fallback_recommends(monkeypatch):
     monkeypatch.setattr(llm, "route", lambda m: {})   # simulate LLM failure
     out = agent.handle([U("hiring a python developer with sql")])
     assert len(out["recommendations"]) >= 1           # still functional via retrieval
+
+
+def test_extract_test_types():
+    assert agent._extract_test_types("also add a personality test") == ["P"]
+    assert set(agent._extract_test_types("numerical reasoning and personality")) == {"A", "P"}
+    assert agent._extract_test_types("hiring a java developer") == []
+
+
+def test_detect_compare():
+    assert agent._detect_compare("difference between OPQ and a numerical test") == ["OPQ", "numerical"]
+    assert agent._detect_compare("OPQ32r vs Verify Numerical") == ["OPQ32r", "Verify Numerical"]
+    assert agent._detect_compare("hiring a junior or senior developer") is None
+
+
+def test_refine_adds_personality_without_llm(monkeypatch):
+    # LLM fully down: deterministic test-type extraction must still add a P item.
+    monkeypatch.setattr(llm, "route", lambda m: {})
+    monkeypatch.setattr(llm, "rerank", lambda q, c: {})
+    out = agent.handle([U("Hiring a Java developer"), A("Here are some."),
+                        U("Actually, also add a personality test")])
+    assert any("P" in r["test_type"] for r in out["recommendations"])
+
+
+def test_compare_without_llm(monkeypatch):
+    # LLM fully down: deterministic compare detection + grounded template fallback.
+    monkeypatch.setattr(llm, "route", lambda m: {})
+    monkeypatch.setattr(llm, "compare", lambda q, recs: {})
+    out = agent.handle([U("What's the difference between OPQ and a numerical reasoning test?")])
+    assert 1 <= len(out["recommendations"]) <= 10
+    assert "compare" in out["reply"].lower()
+    urls = {r["url"] for r in catalog.records}
+    assert all(r["url"] in urls for r in out["recommendations"])
+
+
+def test_malformed_router_shape_does_not_crash(monkeypatch):
+    # Router drifts and returns test_types/compare_targets as strings, not lists.
+    monkeypatch.setattr(llm, "route",
+                        lambda m: {"action": "recommend", "search_query": "java", "test_types": "P"})
+    monkeypatch.setattr(llm, "rerank", lambda q, c: {})
+    out = agent.handle([U("hiring a java developer")])
+    assert 1 <= len(out["recommendations"]) <= 10

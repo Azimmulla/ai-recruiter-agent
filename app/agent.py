@@ -8,6 +8,8 @@ entrypoint is wrapped so it always returns a schema-valid dict.
 """
 from __future__ import annotations
 
+import re
+
 from app import llm
 from app.catalog import get_catalog
 from app.config import MAX_RECOMMENDATIONS, REC_FLOOR, RETRIEVE_K
@@ -74,6 +76,67 @@ def _all_user_text(messages: list[dict]) -> str:
 def _looks_vague(text: str) -> bool:
     t = text.lower()
     return len(t.split()) <= VAGUE_MAX_WORDS and not any(h in t for h in _ROLE_HINTS)
+
+
+# Deterministic test-type extraction: maps explicit category words to SHL keys so
+# "refine" (e.g. "add a personality test") works even when the LLM router is down.
+_TYPE_KEYWORDS = (
+    ("P", ("personality", "behavioural", "behavioral", "opq", "motivation questionnaire",
+           "disposition", "temperament", "soft skill")),
+    ("A", ("cognitive", "aptitude", "numerical", "verbal reasoning", "inductive", "deductive",
+           "logical reasoning", "abstract reasoning", "reasoning test", "ability test",
+           "general ability")),
+    ("S", ("simulation", "role play", "role-play")),
+    ("B", ("situational judg", "sjt", "judgement test", "judgment test", "biodata")),
+    ("C", ("competency", "competencies")),
+    ("K", ("coding test", "programming test", "technical skills", "knowledge test")),
+)
+
+
+def _as_str_list(value) -> list[str]:
+    """Coerce a router field to a clean list of strings (it may arrive as a
+    string, None, or a list with non-string items if the model drifts)."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    return []
+
+
+def _extract_test_types(text: str) -> list[str]:
+    t = text.lower()
+    out: list[str] = []
+    for code, kws in _TYPE_KEYWORDS:
+        if any(k in t for k in kws) and code not in out:
+            out.append(code)
+    return out
+
+
+# Deterministic compare-intent detection: routes "difference between X and Y",
+# "compare X and Y", "X vs Y" to the grounded compare path without the LLM.
+_COMPARE_PATTERNS = (
+    re.compile(r"\b(?:difference|differences|differ)\b[^.?!]*?\bbetween\b\s+(.+?)\s+"
+               r"\b(?:and|vs\.?|versus|or)\b\s+(.+?)[?.!]*$", re.I),
+    re.compile(r"\bcompare\b\s+(.+?)\s+\b(?:and|with|to|vs\.?|versus)\b\s+(.+?)[?.!]*$", re.I),
+    re.compile(r"\bhow does\b\s+(.+?)\s+\bdiffer from\b\s+(.+?)[?.!]*$", re.I),
+    re.compile(r"^(.+?)\s+\b(?:vs\.?|versus)\b\s+(.+?)[?.!]*$", re.I),
+)
+_TAIL = re.compile(r"\s*\b(?:assessment|assessments|test|tests)\b\s*$", re.I)
+_LEAD = re.compile(r"^(?:a|an|the)\s+", re.I)
+
+
+def _detect_compare(text: str) -> list[str] | None:
+    text = text.strip()
+    for pat in _COMPARE_PATTERNS:
+        m = pat.search(text)
+        if not m:
+            continue
+        a, b = (_LEAD.sub("", _TAIL.sub("", g.strip(" ,"))).strip() for g in m.groups())
+        if a and b and len(a) < 60 and len(b) < 60:
+            return [a, b]
+    return None
 
 
 def _recommend(query: str, test_types: list[str]) -> dict:
@@ -150,10 +213,15 @@ def _compare(question: str, targets: list[str]) -> dict | None:
 
     res = llm.compare(question, matched)
     reply = res.get("reply")
-    if not reply:  # grounded template fallback
-        parts = [f"{r['name']} is a {', '.join(r['test_type_names']) or 'specialised'} "
-                 f"assessment (~{r.get('assessment_length_min', '?')} min)" for r in matched]
-        reply = "Here's how they compare: " + "; ".join(parts) + "."
+    if not reply:  # grounded template fallback (works with no LLM)
+        parts = []
+        for r in matched:
+            types = ", ".join(r["test_type_names"]) or "specialised"
+            gist = (r["description"] or "").split(". ")[0][:140]
+            length = r.get("assessment_length_min")
+            mins = f", ~{length} min" if length else ""
+            parts.append(f"{r['name']} is a {types} assessment{mins}: {gist}")
+        reply = "Here's how they compare. " + " ".join(parts)
     return {"reply": reply, "recommendations": [_rec(r) for r in matched],
             "end_of_conversation": False}
 
@@ -181,28 +249,40 @@ def handle(messages: list[dict]) -> dict:
         action = (decision.get("action") or "").lower()
         last = _last_user(messages)
 
-        # --- LLM unavailable: minimal but safe heuristic fallback ---
+        # Deterministic signals (work even when the LLM router is rate-limited).
+        det_targets = _detect_compare(last)
+        det_types = _extract_test_types(_all_user_text(messages))
+
+        # --- LLM unavailable: heuristic fallback that still covers all behaviors ---
         if not decision:
+            if det_targets:
+                res = _compare(last, det_targets)
+                if res is not None:
+                    return res
             if _looks_vague(_all_user_text(messages)) and not prior_clarifications and not must_recommend:
                 return {"reply": CLARIFY_DEFAULT, "recommendations": [], "end_of_conversation": False}
-            return _recommend(_all_user_text(messages), [])
+            return _recommend(_all_user_text(messages), det_types)
 
         if action == "refuse" and not must_recommend:
             reply = REFUSALS.get(decision.get("refusal_reason", ""), REFUSAL_DEFAULT)
             return {"reply": reply, "recommendations": [], "end_of_conversation": False}
 
+        # Compare: router-detected OR deterministically detected (handles a throttled
+        # router that misroutes a clear "difference between X and Y" to recommend).
+        compare_targets = _as_str_list(decision.get("compare_targets")) or det_targets
+        if compare_targets:
+            res = _compare(last, compare_targets)
+            if res is not None:
+                return res
+            # nothing matched the catalog -> fall through to recommend
+
         if action == "clarify" and not prior_clarifications and not must_recommend:
             q = decision.get("clarifying_question") or CLARIFY_DEFAULT
             return {"reply": q, "recommendations": [], "end_of_conversation": False}
 
-        if action == "compare":
-            res = _compare(last, decision.get("compare_targets") or [])
-            if res is not None:
-                return res
-            # fall through to recommend if nothing matched
-
         query = decision.get("search_query") or _all_user_text(messages)
-        return _recommend(query, decision.get("test_types") or [])
+        test_types = list(dict.fromkeys(_as_str_list(decision.get("test_types")) + det_types))
+        return _recommend(query, test_types)
 
     except Exception:
         # Last-resort safety net: never 500 the evaluator.
