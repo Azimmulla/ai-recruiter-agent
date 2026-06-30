@@ -1,0 +1,62 @@
+[
+  {
+    "id": "java_dev_stakeholder",
+    "persona": "Hiring a mid-level Java developer who collaborates with stakeholders.",
+    "user_turns": ["Hiring a Java developer who works with stakeholders", "Mid-level, around 4 years"],
+    "expected": ["Java 8 (New)", "Core Java (Advanced Level) (New)", "Occupational Personality Questionnaire OPQ32r"]
+  },
+  {
+    "id": "python_sql_dev",
+    "persona": "Backend engineer who writes Python and a lot of SQL.",
+    "user_turns": ["I'm hiring a Python developer who writes a lot of SQL"],
+    "expected": ["Python (New)", "SQL (New)"]
+  },
+  {
+    "id": "dotnet_csharp_dev",
+    "persona": "Web developer on the .NET/C# stack.",
+    "user_turns": ["Looking for a .NET developer experienced with C# and ASP.NET"],
+    "expected": [".NET Framework 4.5", "ASP .NET with C# (New)", "ADO.NET (New)"]
+  },
+  {
+    "id": "graduate_reasoning",
+    "persona": "Graduate scheme needing cognitive reasoning screening.",
+    "user_turns": ["We run a graduate scheme and want to test reasoning ability", "Numerical and verbal reasoning mainly"],
+    "expected": ["Verify - Numerical Reasoning", "Verify - Verbal Reasoning", "Verify - Inductive Reasoning (2014)"]
+  },
+  {
+    "id": "sales_rep_personality",
+    "persona": "Hiring sales reps; cares about personality and sales aptitude.",
+    "user_turns": ["Hiring sales representatives", "I care about their personality and sales ability"],
+    "expected": ["Occupational Personality Questionnaire OPQ32r", "Sales & Service Phone Simulation"]
+  },
+  {
+    "id": "contact_center_csr",
+    "persona": "Contact-center customer service agents.",
+    "user_turns": ["Hiring contact center customer service agents"],
+    "expected": ["Customer Service Phone Simulation", "Customer Contact Series Questionnaire CCSQ7.2"]
+  },
+  {
+    "id": "mechanical_engineer",
+    "persona": "Assessing a mechanical engineer.",
+    "user_turns": ["I need to assess a mechanical engineer"],
+    "expected": ["Mechanical Engineering (New)", "Verify - Mechanical Comprehension 2012+"]
+  },
+  {
+    "id": "accounts_clerk",
+    "persona": "Hiring an accounts payable / receivable clerk.",
+    "user_turns": ["Hiring an accounts payable clerk"],
+    "expected": ["Accounts Payable (New)", "Accounts Receivable (New)"]
+  },
+  {
+    "id": "leadership_opq",
+    "persona": "Assessing senior managers for leadership style.",
+    "user_turns": ["Assessing senior managers for a leadership role", "Mainly personality and leadership style"],
+    "expected": ["Occupational Personality Questionnaire OPQ32r"]
+  },
+  {
+    "id": "refine_java_add_personality",
+    "persona": "Java developer, then refines to add a personality test mid-conversation.",
+    "user_turns": ["Hiring a Java developer", "Actually, also add a personality test"],
+    "expected": ["Java 8 (New)", "Occupational Personality Questionnaire OPQ32r"]
+  }
+]

@@ -1,0 +1,21 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Scraper raw HTML cache (large, regenerable)
+data/raw_cache/
+scratch/
+
+# Model cache (downloaded at build/runtime)
+.fastembed_cache/
+.cache/
+
+# OS
+.DS_Store

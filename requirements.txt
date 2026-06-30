@@ -1,0 +1,23 @@
+# --- API service ---
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+python-dotenv==1.0.1
+
+# --- LLM (agent reasoning layer) ---
+google-genai==1.2.0
+
+# --- Retrieval (local, no torch) ---
+fastembed==0.5.1          # ONNX bge-small-en-v1.5 embeddings, CPU-only
+rank-bm25==0.2.2
+numpy==1.26.4
+
+# --- Scraper (dev/build only) ---
+requests==2.32.3
+certifi==2024.12.14
+beautifulsoup4==4.12.3
+lxml==5.3.0
+
+# --- Tests / eval (dev only) ---
+pytest==8.3.4
+httpx==0.28.1

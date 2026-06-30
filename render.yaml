@@ -1,0 +1,22 @@
+# Render blueprint. Deploy: push to GitHub, then New > Blueprint and point at this repo.
+# Set GEMINI_API_KEY in the Render dashboard (it is intentionally not stored here).
+services:
+  - type: web
+    name: shl-recommender
+    runtime: python
+    plan: free
+    region: oregon
+    # Pre-download the embedding model into the image so the first request
+    # doesn't pay the download cost (faster cold start).
+    buildCommand: >-
+      pip install -r requirements.txt &&
+      python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5')"
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false            # set in dashboard, never committed
+      - key: GEMINI_MODEL
+        value: gemini-2.0-flash
+      - key: PYTHON_VERSION
+        value: "3.12.3"
