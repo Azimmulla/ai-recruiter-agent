@@ -8,11 +8,16 @@ Usage:  python -m eval.probes
 """
 from __future__ import annotations
 
+import os
+import time
+
 from app.agent import handle
 from app.catalog import get_catalog
 
 CAT = get_catalog()
 CATALOG_URLS = {r["url"] for r in CAT.records}
+# Light pacing keeps the free-tier Gemini quota from 429-ing during the burst.
+TURN_DELAY_S = float(os.getenv("PROBE_TURN_DELAY_S", "5"))
 
 
 def _run(turns: list[str]) -> list[dict]:
@@ -24,6 +29,7 @@ def _run(turns: list[str]) -> list[dict]:
         out = handle(history)
         history.append({"role": "assistant", "content": out["reply"]})
         outs.append(out)
+        time.sleep(TURN_DELAY_S)
     return outs
 
 
