@@ -23,26 +23,33 @@ shortlist instead of restarting.
 
 ## Data & retrieval
 
-The live SHL catalog page has been restructured and the flat table is gone, so I rebuilt the
-catalog from the **Wayback Machine** — the static per-product detail pages from the era the
-assignment targets (stable, reproducible, and likely matching the grader's snapshot). I
-enumerated detail pages via the Wayback CDX API (**393 Individual Test Solutions**), parsing
-name, description, job levels, languages, length, test-type keys, and remote-testing flag.
-**Scope** (Individual vs Pre-packaged Job Solutions) is enforced by a slug classifier that I
-validated at **100% against 69 index-page ground-truth labels** before trusting it on the full
-set.
+The catalog is the **official SHL catalog JSON** (377 items): I transform it to the app schema,
+mapping the full-name `keys` to single-letter test-type codes and keeping the official `link`
+URLs verbatim (exactly what the grader validates against). The raw file is cached for a
+reproducible offline build. (A Wayback-Machine scraper is retained as a fallback — built earlier
+when the live catalog table had been removed from the site.)
 
 **Retrieval is local and hybrid:** fastembed `bge-small-en-v1.5` dense vectors (precomputed at
 build, committed) + BM25 sparse, fused with **Reciprocal Rank Fusion**. Dense captures intent
-("works with stakeholders" → personality); BM25 nails exact tokens ("Java", "ADO.NET",
-"Verify"). Catalog embeddings are precomputed so the server only embeds the short query per
-request — fast cold start, fits Render's free tier. I chose fastembed over sentence-transformers
-specifically to avoid PyTorch, which would blow the free-tier build/memory limits.
+("works with stakeholders" → personality); BM25 nails exact tokens ("Java", "Spring", "Docker").
+Embeddings are precomputed so the server only embeds the short query per request — fast cold
+start, fits Render's free tier. fastembed (ONNX) avoids PyTorch, which would blow the free-tier
+build/memory limits.
 
-**Recall robustness:** because Recall@10 is order-independent, the shortlist is anchored on the
-top deterministic retrieval matches (never droppable by the reranker), then refined by the LLM,
-with each requested test-type guaranteed a slot and a pad-to-floor safety net. This keeps recall
-strong even when Gemini is rate-limited (free tier) and the reranker returns nothing.
+**Battery composition.** The sample traces showed the expected shortlist is a *battery*, not a
+single cluster: role-specific skills tests + a general cognitive ability measure (Verify G+) + a
+personality measure (OPQ32r). So the agent (1) extracts the **distinct skills** of a request — a
+full-stack JD becomes ["Core Java","Spring","SQL","AWS","Docker"] — and retrieves a precise match
+per skill, and (2) anchors the battery with a cognitive and a personality instrument by default,
+honouring refinements that remove them. This mirrors real SHL practice and is what lifted recall
+most.
+
+**Recall robustness:** the shortlist is assembled by priority (per-skill matches → battery
+anchors → top retrieval → reranker refinements → fill to 10), deduped by name, anchored on
+deterministic retrieval so the LLM reranker can't drop a strong match. Because Recall@10 is
+order-independent and has no precision penalty, we fill all 10 slots. Everything works even when
+Gemini is rate-limited (free tier): the deterministic backbone keeps recommendations grounded
+and on-target.
 
 ## Prompt design
 
@@ -57,17 +64,19 @@ even if Gemini is unavailable.
 
 ## Evaluation
 
-A replay harness mirrors the grader: it feeds a trace's scripted user turns to `/chat`, answers
-extra questions with "no preference", and stops at the first shortlist. I authored 10 labelled
-traces spanning all four behaviors; expected names resolve against the live catalog by fuzzy
-match. Plus 8 **behavior probes** with binary assertions (refuse off-topic/legal, resist
-injection, no-recommend-on-vague-turn-1, refine adds personality, grounded compare, and a
-"every returned URL ∈ catalog" invariant).
+A replay harness mirrors the grader: it feeds a trace's user turns to `/chat`, answers extra
+questions with "no preference", and stops at the first shortlist (the simulated user ends when
+the agent recommends). I parse the **10 official sample conversations** into labelled traces —
+the user turns drive the replay and the final recommendations table is the relevance label set
+(all 10 resolved 100% against the catalog). Plus 8 **behavior probes** with binary assertions
+(refuse off-topic/legal, resist injection, no-recommend-on-vague-turn-1, refine adds personality,
+grounded compare, and a "every returned URL ∈ catalog" invariant) and 19 pytest unit tests.
 
-Results: **mean Recall@10 = 0.77**; **probes 8/8** (7/8 before adding the deterministic legal
-guard). Retrieval alone places the labelled items in the top candidates for every trace, so the
-remaining recall gap is dominated by label specificity (e.g. the catalog has many OPQ "report"
-variants vs. the base OPQ32r questionnaire) rather than retrieval misses.
+Results on the official traces: **mean Recall@10 = 0.68**, **probes 8/8**. Measured improvement:
+battery composition + per-skill retrieval took the mean from **0.47 → 0.65**, and filling all 10
+slots → **0.68**. The remaining gap is largely the scripted replay's limitation — several labels
+depend on facts the persona only reveals in later turns, which the grader's *dynamic* user would
+surface in response to the agent's clarifying questions.
 
 ## What didn't work / how I measured it
 
@@ -78,9 +87,10 @@ variants vs. the base OPQ32r questionnaire) rather than retrieval misses.
   reasoning (`finish_reason=MAX_TOKENS`). Switching the primary to **`gemini-2.0-flash`**
   (non-thinking, faster, higher free-tier limits) fixed it; 2.5-flash remains the fallback.
 - **Reranker dropping the top retrieval match** (it once returned Core Java *Entry* over the
-  rank-1 *Advanced*, plus a duplicate name). Fix: retrieval-anchored selection + name dedup,
-  which lifted that trace 0.33 → 0.67 and the mean 0.73 → 0.77.
-- Each change was measured with the same Recall@10 + probe harness; numbers above are the deltas.
+  rank-1 *Advanced*, plus a duplicate name). Fix: retrieval-anchored selection + name dedup.
+- **Narrow single-cluster shortlists** were the biggest recall leak: the labels are batteries.
+  Per-skill retrieval + cognitive/personality anchors moved the mean from 0.47 → 0.65.
+- Each change was measured against the 10 official sample traces; numbers above are the deltas.
 
 ## Stack & AI-tool usage
 

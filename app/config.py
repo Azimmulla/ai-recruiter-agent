@@ -32,7 +32,7 @@ LLM_TIMEOUT_S = float(os.getenv("LLM_TIMEOUT_S", "10"))
 # --- Retrieval ---
 EMBED_MODEL = os.getenv("EMBED_MODEL", "BAAI/bge-small-en-v1.5")
 RETRIEVE_K = int(os.getenv("RETRIEVE_K", "30"))      # candidates passed to the reranker
-REC_FLOOR = int(os.getenv("REC_FLOOR", "8"))         # min shortlist size (recall safety net)
+REC_FLOOR = int(os.getenv("REC_FLOOR", "10"))        # fill all 10 slots (Recall@10 has no precision penalty)
 MAX_RECOMMENDATIONS = 10                              # hard schema cap (spec: 1..10)
 
 # --- Catalog scope ---

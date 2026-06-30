@@ -41,6 +41,11 @@ Rules:
 - search_query: a rich retrieval query in terms of role, seniority, skills, and \
 competencies, combining every constraint stated so far. Empty unless action is \
 recommend/refine.
+- skills: the DISTINCT skills, technologies, or competencies to assess, one per item — the \
+system retrieves a set of assessments for each. Break a job description into its individual \
+parts (e.g. ["Core Java", "Spring", "SQL", "AWS", "Docker"]). A good hiring battery usually \
+also includes a general cognitive ability measure and a personality measure, so add those \
+(e.g. "general cognitive ability", "workplace personality") unless the user excludes them.
 - test_types: letter codes the user implies/requests (personality->P, cognitive/aptitude->A, \
 coding/technical knowledge->K, simulations->S, situational judgement->B). If the role involves \
 interpersonal, communication, leadership, management, or stakeholder skills, include P. Empty if none.
@@ -52,6 +57,7 @@ Output ONLY this JSON object (use "" or [] for fields that don't apply):
 {{
   "action": "clarify" | "recommend" | "refine" | "compare" | "refuse",
   "search_query": "string",
+  "skills": ["skill or technology", ...],
   "test_types": ["P", "A", ...],
   "compare_targets": ["name", ...],
   "clarifying_question": "string",

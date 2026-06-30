@@ -46,8 +46,8 @@ pip install -r requirements.txt
 cp .env.example .env          # then put your Gemini key in .env (GEMINI_API_KEY)
 
 # (optional) rebuild the data artifacts — they are committed, so this is not required:
-python -m scraper.scrape_catalog     # -> data/catalog.json  (393 Individual Test Solutions)
-python -m scraper.build_index        # -> data/embeddings.npy
+python -m scraper.load_official_catalog   # -> data/catalog.json (377 items, official SHL catalog)
+python -m scraper.build_index             # -> data/embeddings.npy
 
 uvicorn app.main:app --reload        # http://127.0.0.1:8000  (docs at /docs)
 ```
@@ -57,9 +57,10 @@ Get a free Gemini key at https://aistudio.google.com/apikey.
 ## Tests & evaluation
 
 ```bash
-pytest                    # 14 offline tests (schema contract, retrieval, grounding, behaviors)
-python -m eval.run_eval   # mean Recall@10 over eval/traces.json
-python -m eval.probes     # behavior probe pass-rate (refuse / clarify / refine / compare / no-hallucination)
+pytest                          # 19 offline tests (schema contract, retrieval, grounding, behaviors)
+python -m eval.parse_conversations   # GenAI_SampleConversations/*.md -> eval/traces.json (labeled)
+python -m eval.run_eval         # mean Recall@10 over the 10 official sample traces (~0.68)
+python -m eval.probes           # behavior probe pass-rate, 8/8 (refuse / clarify / refine / compare / no-hallucination)
 ```
 
 ## Deploy (Render)
@@ -82,10 +83,13 @@ tests/       pytest suite
 See [approach.md](approach.md) for design rationale, retrieval setup, prompt design, what
 didn't work, and AI-tool usage.
 
-## Note on the data source
+## Data source
 
-The live SHL site has since been restructured and the flat product-catalog table no longer
-exists, so the catalog is reconstructed from the **Wayback Machine** snapshot the assignment
-was written against (stable + reproducible). Scope is restricted to Individual Test Solutions
-via a slug classifier validated at 100% against index-page ground-truth labels; Pre-packaged
-Job Solutions are excluded.
+The catalog is built from the **official SHL catalog JSON** provided for the task (377 items)
+via [scraper/load_official_catalog.py](scraper/load_official_catalog.py) — its `link` URLs and
+item set are exactly what the evaluator grades against. The raw file is cached at
+`data/official_catalog.json` for a reproducible offline build.
+
+A standalone Wayback-Machine scraper ([scraper/scrape_catalog.py](scraper/scrape_catalog.py))
+is kept as a fallback for reconstructing the catalog from the live/archived site if the JSON
+is unavailable.

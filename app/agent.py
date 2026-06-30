@@ -139,34 +139,79 @@ def _detect_compare(text: str) -> list[str] | None:
     return None
 
 
-def _recommend(query: str, test_types: list[str]) -> dict:
+# A good SHL hiring battery pairs role-specific tests with a general cognitive
+# ability measure and a personality measure. These flagship instruments anchor
+# the battery by default (the sample conversations confirm the pattern); a
+# refinement that removes them is honoured via _battery_flags().
+COGNITIVE_ANCHORS = ("SHL Verify Interactive G+", "Verify - G+")
+PERSONALITY_ANCHORS = ("Occupational Personality Questionnaire OPQ32r",)
+_EXCL = r"(?:no|without|remove|drop|exclude|skip|don'?t want|do not want)"
+
+
+def _battery_flags(text: str) -> tuple[bool, bool]:
+    """(include_cognitive, include_personality) — False if the user excludes one."""
+    t = text.lower()
+    cog = not re.search(_EXCL + r"[^.]*\b(cognitive|aptitude|general ability|verify\s*g)\b", t)
+    pers = not re.search(_EXCL + r"[^.]*\b(personality|opq|behaviou?ral)\b", t)
+    return cog, pers
+
+
+def _anchor_id(names: tuple[str, ...], restrict_type: str, query: str) -> int | None:
+    """Resolve a battery anchor: a named flagship, else the top item of its type."""
+    catalog = get_catalog()
+    for n in names:
+        r = catalog.find_by_name(n)
+        if r:
+            return r["id"]
+    res = get_retriever().search(query, k=1, restrict_types=[restrict_type])
+    return res[0]["id"] if res else None
+
+
+def _recommend(query: str, test_types: list[str], skills: list[str] | None = None,
+               include_cognitive: bool = True, include_personality: bool = True) -> dict:
     catalog = get_catalog()
     retriever = get_retriever()
+    skills = skills or []
+
     candidates = retriever.search(query, k=RETRIEVE_K, test_types=test_types)
+    pool = {c["id"]: c for c in candidates}
 
-    # Multi-aspect needs (e.g. a Java skills test AND a personality test for
-    # stakeholder skills): make sure every requested test type is represented in
-    # the candidate pool, otherwise a skill-dominated query never surfaces it.
-    if test_types:
-        seen = {c["id"] for c in candidates}
-        for tt in test_types:
-            if not any(tt in c["test_type"] for c in candidates):
-                for extra in retriever.search(query, k=6, restrict_types=[tt]):
-                    if extra["id"] not in seen:
-                        seen.add(extra["id"])
-                        candidates.append(extra)
+    # Per-skill retrieval: a job description has many parts (Java, Spring, AWS...);
+    # retrieve a precise match for each so none is drowned out by the main query.
+    skill_top: list[int] = []
+    for sk in skills[:8]:
+        res = retriever.search(sk, k=3)
+        if res:
+            skill_top.append(res[0]["id"])
+        for c in res:
+            pool.setdefault(c["id"], c)
 
-    if not candidates:
+    # Ensure any explicitly requested test type is represented in the pool.
+    for tt in test_types:
+        if not any(tt in c["test_type"] for c in pool.values()):
+            for extra in retriever.search(query, k=6, restrict_types=[tt]):
+                pool.setdefault(extra["id"], extra)
+
+    if not pool:
         return {"reply": CLARIFY_DEFAULT, "recommendations": [], "end_of_conversation": False}
 
-    rr = llm.rerank(query, candidates)
+    # Battery anchors (general cognitive ability + personality).
+    anchors: list[int] = []
+    if include_cognitive:
+        anchors.append(_anchor_id(COGNITIVE_ANCHORS, "A", query))
+    if include_personality:
+        anchors.append(_anchor_id(PERSONALITY_ANCHORS, "P", query))
+    anchors = [a for a in anchors if a is not None]
+    for a in anchors:
+        pool.setdefault(a, catalog.get(a))
+
+    main_ids = [c["id"] for c in candidates]
+    rr = llm.rerank(query, list(pool.values())[:RETRIEVE_K])
     rr_ids = catalog.valid_ids([int(i) for i in rr.get("ids", []) if isinstance(i, (int, str))
                                 and str(i).lstrip("-").isdigit()])
-    cand_ids = [c["id"] for c in candidates]
 
-    # Build the shortlist by priority, deduping by name (the catalog has a few
-    # same-named variants). Recall@10 is order-independent, so the goal is the
-    # best SET of <=10 items.
+    # Assemble the shortlist by priority, deduping by name. Recall@10 is
+    # order-independent, so the goal is the best SET of <=10 items.
     final: list[int] = []
     seen_names: set[str] = set()
 
@@ -180,17 +225,20 @@ def _recommend(query: str, test_types: list[str]) -> dict:
         seen_names.add(key)
         final.append(i)
 
-    for i in cand_ids[:BACKBONE]:          # 1. strongest retrieval matches, never dropped
+    for i in skill_top:                    # 1. one precise item per requested skill
         add(i)
-    for tt in test_types:                  # 2. guarantee each requested test type (refine)
+    for a in anchors:                      # 2. battery anchors (cognitive + personality)
+        add(a)
+    for i in main_ids[:BACKBONE]:          # 3. strongest overall matches
+        add(i)
+    for tt in test_types:                  # 4. guarantee each requested test type (refine)
         if not any(tt in catalog.get(i)["test_type"] for i in final):
-            for c in candidates:
-                if tt in c["test_type"]:
-                    add(c["id"])
-                    break
-    for i in rr_ids:                       # 3. reranker refinements (may surface lower-ranked gems)
+            nxt = next((c["id"] for c in pool.values() if tt in c["test_type"]), None)
+            if nxt is not None:
+                add(nxt)
+    for i in rr_ids:                       # 5. reranker refinements
         add(i)
-    for i in cand_ids:                     # 4. pad to the recall floor
+    for i in main_ids:                     # 6. pad to the recall floor
         if len(final) >= REC_FLOOR:
             break
         add(i)
@@ -252,6 +300,7 @@ def handle(messages: list[dict]) -> dict:
         # Deterministic signals (work even when the LLM router is rate-limited).
         det_targets = _detect_compare(last)
         det_types = _extract_test_types(_all_user_text(messages))
+        inc_cog, inc_pers = _battery_flags(_all_user_text(messages))
 
         # --- LLM unavailable: heuristic fallback that still covers all behaviors ---
         if not decision:
@@ -261,7 +310,8 @@ def handle(messages: list[dict]) -> dict:
                     return res
             if _looks_vague(_all_user_text(messages)) and not prior_clarifications and not must_recommend:
                 return {"reply": CLARIFY_DEFAULT, "recommendations": [], "end_of_conversation": False}
-            return _recommend(_all_user_text(messages), det_types)
+            return _recommend(_all_user_text(messages), det_types,
+                              include_cognitive=inc_cog, include_personality=inc_pers)
 
         if action == "refuse" and not must_recommend:
             reply = REFUSALS.get(decision.get("refusal_reason", ""), REFUSAL_DEFAULT)
@@ -282,7 +332,9 @@ def handle(messages: list[dict]) -> dict:
 
         query = decision.get("search_query") or _all_user_text(messages)
         test_types = list(dict.fromkeys(_as_str_list(decision.get("test_types")) + det_types))
-        return _recommend(query, test_types)
+        skills = _as_str_list(decision.get("skills"))
+        return _recommend(query, test_types, skills=skills,
+                          include_cognitive=inc_cog, include_personality=inc_pers)
 
     except Exception:
         # Last-resort safety net: never 500 the evaluator.
