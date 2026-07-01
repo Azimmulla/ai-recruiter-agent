@@ -38,6 +38,16 @@ app.add_middleware(
 )
 
 
+@app.get("/")
+def root() -> dict:
+    return {
+        "service": "SHL Assessment Recommender",
+        "status": "ok",
+        "usage": "POST /chat with {\"messages\": [{\"role\": \"user\", \"content\": \"...\"}]}",
+        "endpoints": {"health": "GET /health", "chat": "POST /chat", "docs": "GET /docs"},
+    }
+
+
 @app.get("/health", response_model=HealthResponse)
 def health() -> dict:
     return {"status": "ok"}
